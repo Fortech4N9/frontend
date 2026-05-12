@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* Tailwind v4: переключаем dark на основе класса .dark на <html>, а не media query.
+   Так переключатель темы реально работает по клику пользователя, а не только по системной теме. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Плавный переход всей палитры при смене темы. */
+html {
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
