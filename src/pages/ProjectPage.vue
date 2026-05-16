@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, inject } from 'vue'
+import { inject, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAnalysisStore } from '@/entities/analysis'
 import AppHeader from '@/widgets/AppHeader.vue'
 import FileDropZone from '@/features/upload/FileDropZone.vue'
 import AnalysisPipelineStatus from '@/widgets/AnalysisPipelineStatus.vue'
 import MetricsPanel from '@/widgets/MetricsPanel.vue'
+import CacheSimulatorConfigToolbar from '@/widgets/CacheSimulatorConfigToolbar.vue'
+import CacheConfigGateModal from '@/widgets/CacheConfigGateModal.vue'
 import { ArrowLeft, FileCode } from 'lucide-vue-next'
 
 const route = useRoute()
@@ -16,6 +18,9 @@ const projectId = route.params.id as string
 const uploading = ref(false)
 const metricsTaskId = ref<string | null>(null)
 
+const selectedCacheConfigId = ref<string | null>(null)
+const showConfigGateModal = ref(false)
+
 // Map task_id → filename for display
 const fileNames = ref<Record<string, string>>({})
 
@@ -24,13 +29,20 @@ onMounted(() => {
 })
 
 async function handleFileDrop(file: File) {
+  if (!selectedCacheConfigId.value) {
+    showConfigGateModal.value = true
+    toast('Выберите или загрузите конфиг симулятора кэша', 'error')
+    return
+  }
+
   uploading.value = true
   try {
-    const task = await store.uploadFile(projectId, file)
+    const task = await store.uploadFile(projectId, file, selectedCacheConfigId.value)
     fileNames.value[task.id] = file.name
     toast(`${file.name} загружен, анализ запущен`, 'success')
-  } catch (e: any) {
-    toast(e.response?.data?.error || 'Ошибка загрузки', 'error')
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    toast(err.response?.data?.error || 'Ошибка загрузки', 'error')
   } finally {
     uploading.value = false
   }
@@ -39,6 +51,8 @@ async function handleFileDrop(file: File) {
 
 <template>
   <div class="min-h-screen bg-zinc-50 dark:bg-zinc-950">
+    <CacheConfigGateModal :open="showConfigGateModal" @close="showConfigGateModal = false" />
+
     <AppHeader />
 
     <main class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -51,6 +65,8 @@ async function handleFileDrop(file: File) {
       </RouterLink>
 
       <h1 class="text-2xl font-bold text-zinc-900 dark:text-white mb-6">Анализ файлов</h1>
+
+      <CacheSimulatorConfigToolbar v-model="selectedCacheConfigId" />
 
       <!-- Upload zone -->
       <div class="mb-8">
@@ -87,10 +103,6 @@ async function handleFileDrop(file: File) {
       </div>
     </main>
 
-    <MetricsPanel
-      v-if="metricsTaskId"
-      :task-id="metricsTaskId"
-      @close="metricsTaskId = null"
-    />
+    <MetricsPanel v-if="metricsTaskId" :task-id="metricsTaskId" @close="metricsTaskId = null" />
   </div>
 </template>

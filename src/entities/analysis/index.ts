@@ -6,5 +6,6 @@ export type {
   FileSimulationResults,
   TaskStatus,
   ProjectFile,
+  CacheSimulatorConfig,
 } from './model/types'
 export { STATUS_LABELS } from './model/types'

@@ -8,8 +8,21 @@ export interface AnalysisTask {
   static_artifact_s3_path?: string
   cache_artifact_s3_path?: string
   cache_profile_hash?: string
+  cache_config_id?: string
+  cache_config_s3_path?: string
   created_at: string
   updated_at: string
+}
+
+/** Конфиг для cache-analysis-worker — пользователь загружает файл, MinIO-хранится на бэкенде. */
+export interface CacheSimulatorConfig {
+  id: string
+  user_id: string
+  display_name: string
+  original_filename: string
+  s3_path: string
+  size_bytes: number
+  created_at: string
 }
 
 export interface ProjectFile {
@@ -19,6 +32,7 @@ export interface ProjectFile {
   s3_path: string
   content_hash: string
   size_bytes: number
+  owner_user_id?: string
   created_at: string
 }
 

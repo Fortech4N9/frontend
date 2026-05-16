@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, shallowRef, inject, computed, onMounted } from 'vue'
+import { ref, shallowRef, inject, computed, watch, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { Splitpanes, Pane } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { VueMonacoEditor } from '@guolao/vue-monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 
 import AppHeader from '@/widgets/AppHeader.vue'
+import CacheSimulatorConfigToolbar from '@/widgets/CacheSimulatorConfigToolbar.vue'
+import CacheConfigGateModal from '@/widgets/CacheConfigGateModal.vue'
 import ExtendedResultsPanel from '@/widgets/ExtendedResultsPanel.vue'
 import { AppButton } from '@/shared/ui'
 import {
@@ -58,6 +61,11 @@ const errorMessage = ref<string | null>(null)
 const reusedFromTaskId = ref<string | null>(null)
 const currentTaskId = ref<string | null>(null)
 
+const LS_SANDBOX_PROJECT = 'sandbox_selected_project_id'
+const selectedProjectId = ref('')
+const selectedCacheConfigId = ref<string | null>(null)
+const showConfigGateModal = ref(false)
+
 // Источник правды для повторного анализа: если выбран файл из sidebar, помним
 // его id и содержимое в момент загрузки. Если содержимое в редакторе совпадает —
 // дёргаем `analyzeExistingFile(file_id)` (без upload). Если поменяли —
@@ -65,13 +73,12 @@ const currentTaskId = ref<string | null>(null)
 const currentFileId = ref<string | null>(null)
 const loadedContent = ref<string | null>(null)
 
-const sandboxProjectId = ref<string | null>(null)
-const projectFiles = ref<ProjectFile[]>([])
-const filesLoading = ref(false)
-
 const editorRef = shallowRef<MonacoEditor.IStandaloneCodeEditor>()
 const monacoRef = shallowRef<typeof import('monaco-editor')>()
 const currentDecorations = shallowRef<string[]>([])
+
+const projectFiles = ref<ProjectFile[]>([])
+const filesLoading = ref(false)
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 
@@ -99,31 +106,67 @@ const isFileUnchanged = computed(
   () => currentFileId.value !== null && loadedContent.value !== null && code.value === loadedContent.value,
 )
 
-async function getOrCreateSandboxProject(): Promise<string> {
-  if (sandboxProjectId.value) return sandboxProjectId.value
-  await projectStore.fetchProjects()
-  const existing = projectStore.projects.find((p) => p.name === 'Sandbox')
-  if (existing) {
-    sandboxProjectId.value = existing.id
-    return existing.id
+function persistSandboxProjectChoice(id: string) {
+  try {
+    if (!id.trim()) {
+      localStorage.removeItem(LS_SANDBOX_PROJECT)
+      return
+    }
+    localStorage.setItem(LS_SANDBOX_PROJECT, id)
+  } catch {
+    /* ignore */
   }
-  const created = await projectStore.createProject({ name: 'Sandbox' })
-  sandboxProjectId.value = created.id
-  return created.id
 }
 
+function readSandboxProjectChoice(): string | null {
+  try {
+    return localStorage.getItem(LS_SANDBOX_PROJECT)?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+function syncSandboxProjectFromList() {
+  const list = projectStore.projects
+  if (!list.length) {
+    selectedProjectId.value = ''
+    projectFiles.value = []
+    persistSandboxProjectChoice('')
+    return
+  }
+  const stored = readSandboxProjectChoice()
+  if (stored && list.some((p) => p.id === stored)) {
+    selectedProjectId.value = stored
+    return
+  }
+  selectedProjectId.value = list[0]!.id
+  persistSandboxProjectChoice(selectedProjectId.value)
+}
+
+watch(selectedProjectId, async (pid) => {
+  if (!pid) {
+    projectFiles.value = []
+    return
+  }
+  persistSandboxProjectChoice(pid)
+  await refreshFiles()
+})
+
 async function refreshFiles() {
-  if (!sandboxProjectId.value) return
+  if (!selectedProjectId.value) {
+    projectFiles.value = []
+    return
+  }
   filesLoading.value = true
   try {
-    projectFiles.value = await analysisStore.fetchProjectFiles(sandboxProjectId.value)
-  } catch (e: any) {
-    toast(e.response?.data?.error || 'Не удалось загрузить список файлов', 'error')
+    projectFiles.value = await analysisStore.fetchProjectFiles(selectedProjectId.value)
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    toast(err.response?.data?.error || 'Не удалось загрузить список файлов', 'error')
   } finally {
     filesLoading.value = false
   }
 }
-
 async function loadFileFromList(file: ProjectFile) {
   try {
     const content = await analysisStore.fetchFileContent(file.id)
@@ -135,6 +178,27 @@ async function loadFileFromList(file: ProjectFile) {
     toast(`Открыт файл ${file.filename}`, 'info')
   } catch (e: any) {
     toast(e.response?.data?.error || 'Не удалось открыть файл', 'error')
+  }
+}
+
+async function removeFileFromList(f: ProjectFile) {
+  if (
+    !confirm(
+      `Убрать «${f.filename}» из списка? Объект в хранилище сохранится, но файл здесь отображаться не будет.`,
+    )
+  ) {
+    return
+  }
+  try {
+    await analysisStore.deleteProjectFile(f.id)
+    if (currentFileId.value === f.id) {
+      newEmptyFile()
+    }
+    await refreshFiles()
+    toast('Файл скрыт из списка проекта', 'success')
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    toast(err.response?.data?.error || 'Не удалось скрыть файл', 'error')
   }
 }
 
@@ -151,6 +215,15 @@ async function runAnalysis() {
     toast('Напишите или загрузите C-код для анализа', 'error')
     return
   }
+  if (!selectedProjectId.value) {
+    toast('Сначала создайте проект и выберите его в списке', 'error')
+    return
+  }
+  if (!selectedCacheConfigId.value) {
+    showConfigGateModal.value = true
+    toast('Выберите или загрузите конфиг симулятора кэша', 'error')
+    return
+  }
 
   analyzing.value = true
   metrics.value = null
@@ -162,18 +235,17 @@ async function runAnalysis() {
   clearDecorations()
 
   try {
-    const projectId = await getOrCreateSandboxProject()
+    const projectId = selectedProjectId.value
+    const cacheCfg = selectedCacheConfigId.value!
 
     let task: AnalysisTask
     if (isFileUnchanged.value && currentFileId.value) {
-      // Повторный анализ того же файла — никакого upload, никакой новой записи в files.
-      task = await analysisStore.analyzeExistingFile(currentFileId.value)
+      task = await analysisStore.analyzeExistingFile(currentFileId.value, cacheCfg)
     } else {
       const blob = new Blob([code.value], { type: 'text/x-csrc' })
       const file = new File([blob], fileName.value, { type: 'text/x-csrc' })
-      task = await analysisStore.uploadFile(projectId, file)
+      task = await analysisStore.uploadFile(projectId, file, cacheCfg)
 
-      // После upload-а синхронизируемся со списком и подцепляем file_id (если бэкенд переиспользовал, id будет тот же).
       await refreshFiles()
       const matched = projectFiles.value.find((f) => f.id === task.file_id)
       if (matched) {
@@ -219,9 +291,10 @@ async function runAnalysis() {
       applyPatternDecorations()
       toast(errorMessage.value || 'Анализ завершился с ошибкой', 'error')
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     currentStatus.value = 'error'
-    toast(e.response?.data?.error || e.message || 'Ошибка анализа', 'error')
+    const err = e as { response?: { data?: { error?: string } }; message?: string }
+    toast(err.response?.data?.error || err.message || 'Ошибка анализа', 'error')
   } finally {
     analyzing.value = false
     refreshFiles().catch(() => {})
@@ -439,16 +512,18 @@ function formatDate(iso: string) {
 
 onMounted(async () => {
   try {
-    await getOrCreateSandboxProject()
-    await refreshFiles()
-  } catch (e: any) {
-    toast(e.response?.data?.error || 'Не удалось загрузить файлы', 'error')
+    await projectStore.fetchProjects()
+    syncSandboxProjectFromList()
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { error?: string } } }
+    toast(err.response?.data?.error || 'Не удалось загрузить проекты', 'error')
   }
 })
 </script>
 
 <template>
   <div class="flex flex-col h-screen bg-zinc-50 dark:bg-zinc-950">
+    <CacheConfigGateModal :open="showConfigGateModal" @close="showConfigGateModal = false" />
     <AppHeader />
 
     <input
@@ -460,7 +535,23 @@ onMounted(async () => {
     />
 
     <!-- Toolbar -->
-    <div class="flex items-center gap-2 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
+    <div class="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-900/80 backdrop-blur">
+      <label class="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-300 shrink-0">
+        Проект
+        <select
+          v-model="selectedProjectId"
+          class="max-w-[200px] rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 text-xs px-2 py-1.5 text-zinc-900 dark:text-zinc-100"
+          :disabled="projectStore.projects.length === 0"
+        >
+          <option v-if="projectStore.projects.length === 0" value="">Нет проектов</option>
+          <option v-for="p in projectStore.projects" :key="p.id" :value="p.id">
+            {{ p.name }}
+          </option>
+        </select>
+      </label>
+
+      <div class="w-px h-5 bg-zinc-300 dark:bg-zinc-700 hidden sm:block" />
+
       <AppButton size="sm" :loading="analyzing" @click="runAnalysis">
         <Play :size="14" class="mr-1.5" />
         {{ isFileUnchanged ? 'Анализировать ещё раз' : 'Анализировать' }}
@@ -505,13 +596,17 @@ onMounted(async () => {
       </div>
     </div>
 
+    <div class="px-4 py-2 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-950/40">
+      <CacheSimulatorConfigToolbar v-model="selectedCacheConfigId" />
+    </div>
+
     <!-- Main content: 3 panes — files | editor | results -->
     <Splitpanes class="flex-1 overflow-hidden">
       <Pane :size="18" :min-size="12" :max-size="35">
         <div class="h-full flex flex-col bg-white dark:bg-zinc-900 border-r border-zinc-200 dark:border-zinc-800">
           <div class="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
             <h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              Мои файлы
+              Файлы проекта
             </h3>
             <button
               type="button"
@@ -524,28 +619,43 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div v-if="projectFiles.length === 0 && !filesLoading" class="p-4 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
-            Здесь появятся ваши загруженные файлы. Нажмите
-            <kbd class="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono">Анализировать</kbd>
-            или загрузите файл с диска — он автоматически сохранится.
+          <div v-if="!projectStore.projects.length" class="p-4 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed">
+            У вас пока нет проектов. Создайте проект на
+            <RouterLink to="/dashboard" class="text-indigo-600 dark:text-indigo-400 underline">дашборде</RouterLink>
+            и вернитесь в песочницу — список файлов подтянется из выбранного проекта.
+          </div>
+
+          <div
+            v-else-if="projectFiles.length === 0 && !filesLoading"
+            class="p-4 text-xs text-zinc-500 dark:text-zinc-500 leading-relaxed"
+          >
+            В этом проекте ещё нет загруженных файлов analysis-api. Запустите
+            <kbd class="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono">
+              Анализировать</kbd>
+            — исходник сохранится в выбранный проект и появится в списке.
           </div>
 
           <ul v-else class="flex-1 overflow-y-auto p-1.5 space-y-0.5">
-            <li v-for="f in projectFiles" :key="f.id">
+            <li
+              v-for="f in projectFiles"
+              :key="f.id"
+              class="flex items-stretch gap-0.5 rounded-lg group/row transition-colors"
+              :class="
+                currentFileId === f.id ? 'bg-indigo-50/80 dark:bg-indigo-950/30' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'
+              "
+            >
               <button
                 type="button"
-                class="w-full text-left px-2.5 py-2 rounded-lg transition-colors cursor-pointer flex items-start gap-2 group"
-                :class="
-                  currentFileId === f.id
-                    ? 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300'
-                    : 'hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300'
-                "
+                class="flex-1 min-w-0 text-left px-2.5 py-2 rounded-l-lg cursor-pointer flex items-start gap-2 transition-colors text-zinc-700 dark:text-zinc-300"
+                :class="currentFileId === f.id ? 'text-indigo-700 dark:text-indigo-300' : ''"
                 @click="loadFileFromList(f)"
               >
                 <FileCode
                   :size="14"
                   class="mt-0.5 shrink-0"
-                  :class="currentFileId === f.id ? 'text-indigo-500' : 'text-zinc-400 group-hover:text-zinc-600 dark:group-hover:text-zinc-300'"
+                  :class="
+                    currentFileId === f.id ? 'text-indigo-500' : 'text-zinc-400 group-hover/row:text-zinc-600 dark:group-hover/row:text-zinc-300'
+                  "
                 />
                 <div class="min-w-0 flex-1">
                   <p class="text-xs font-medium truncate" :title="f.filename">{{ f.filename }}</p>
@@ -553,6 +663,14 @@ onMounted(async () => {
                     {{ formatBytes(f.size_bytes) }} · {{ formatDate(f.created_at) }}
                   </p>
                 </div>
+              </button>
+              <button
+                type="button"
+                title="Убрать из списка проекта"
+                class="shrink-0 px-2 py-2 rounded-r-lg cursor-pointer flex items-start text-zinc-400 hover:text-red-600 dark:hover:text-red-400 opacity-70 group-hover/row:opacity-100 transition-opacity"
+                @click.stop="removeFileFromList(f)"
+              >
+                <Trash2 :size="14" class="mt-0.5" />
               </button>
             </li>
           </ul>

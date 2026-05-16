@@ -67,6 +67,7 @@ const routes: RouteRecordRaw[] = [
     path: '/sandbox',
     name: 'sandbox',
     component: () => import('@/pages/SandboxPage.vue'),
+    meta: { requiresAuth: true },
   },
   {
     path: '/',

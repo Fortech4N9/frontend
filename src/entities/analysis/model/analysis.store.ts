@@ -5,9 +5,12 @@ import type {
   AggregatedPattern,
   AnalysisTask,
   AnalysisMetrics,
+  CacheSimulatorConfig,
   FileSimulationResults,
   ProjectFile,
 } from './types'
+
+const LS_CACHE_CFG = 'preferred_cache_sim_config_id'
 
 export const useAnalysisStore = defineStore('analysis', () => {
   const tasks = ref<AnalysisTask[]>([])
@@ -42,10 +45,62 @@ export const useAnalysisStore = defineStore('analysis', () => {
     return data
   }
 
-  async function uploadFile(projectId: string, file: File): Promise<AnalysisTask> {
+  async function fetchCacheConfigs(): Promise<CacheSimulatorConfig[]> {
+    const { data } = await api.get<{ configs: CacheSimulatorConfig[] }>(
+      '/analysis/cache-configs',
+    )
+    return data.configs ?? []
+  }
+
+  async function uploadCacheConfig(file: File, displayName?: string): Promise<CacheSimulatorConfig> {
+    const form = new FormData()
+    form.append('file', file)
+    if (displayName?.trim()) form.append('name', displayName.trim())
+    const { data } = await api.post<{ config: CacheSimulatorConfig }>('/analysis/cache-configs', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return data.config
+  }
+
+  async function deleteCacheConfig(id: string): Promise<void> {
+    await api.delete(`/analysis/cache-configs/${id}`)
+  }
+
+  /** Мягкое удаление: запись скрыта из списков, объект в хранилище сохранён. */
+  async function deleteProjectFile(fileId: string): Promise<void> {
+    await api.delete(`/analysis/files/${fileId}`)
+  }
+
+  /** Сохраняем последний выбранный конфиг в localStorage. */
+  function persistPreferredCacheConfig(id: string | null) {
+    try {
+      if (!id) {
+        localStorage.removeItem(LS_CACHE_CFG)
+      } else {
+        localStorage.setItem(LS_CACHE_CFG, id)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function readPreferredCacheConfig(): string | null {
+    try {
+      return localStorage.getItem(LS_CACHE_CFG)?.trim() || null
+    } catch {
+      return null
+    }
+  }
+
+  async function uploadFile(
+    projectId: string,
+    file: File,
+    cacheConfigId: string,
+  ): Promise<AnalysisTask> {
     const form = new FormData()
     form.append('project_id', projectId)
     form.append('file', file)
+    form.append('cache_config_id', cacheConfigId)
     const { data } = await api.post<{ task: AnalysisTask }>('/analysis/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
@@ -55,9 +110,18 @@ export const useAnalysisStore = defineStore('analysis', () => {
 
   // analyzeExistingFile — повторный анализ уже загруженного файла без записи
   // нового объекта в MinIO и новой строки в files.
-  async function analyzeExistingFile(fileId: string): Promise<AnalysisTask> {
+  async function analyzeExistingFile(
+    fileId: string,
+    cacheConfigId: string,
+  ): Promise<AnalysisTask> {
+    const form = new FormData()
+    form.append('cache_config_id', cacheConfigId)
     const { data } = await api.post<{ task: AnalysisTask }>(
       `/analysis/files/${fileId}/analyze`,
+      form,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      },
     )
     tasks.value.unshift(data.task)
     return data.task
@@ -106,8 +170,14 @@ export const useAnalysisStore = defineStore('analysis', () => {
     fetchProjectTasks,
     fetchProjectFiles,
     fetchFileContent,
+    fetchCacheConfigs,
+    uploadCacheConfig,
+    deleteCacheConfig,
+    persistPreferredCacheConfig,
+    readPreferredCacheConfig,
     uploadFile,
     analyzeExistingFile,
+    deleteProjectFile,
     fetchTaskStatus,
     fetchTaskMetrics,
     fetchTaskAggregated,
