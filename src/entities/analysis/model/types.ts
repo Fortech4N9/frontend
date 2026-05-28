@@ -44,15 +44,20 @@ export type TaskStatus =
   | 'done'
   | 'error'
 
-export interface AnalysisMetrics {
-  task_id: string
-  status: string
+export interface CacheLevelMetrics {
+  cache_level: string
   total_memory_accesses: number
   cache_hits: number
   cache_misses: number
   hit_rate: number
   miss_rate: number
   optimization_score: number
+}
+
+export interface AnalysisMetrics {
+  task_id: string
+  status: string
+  levels: CacheLevelMetrics[]
 }
 
 // AggregatedPattern зеркалит analysis-api `AggregatedEntry`: одна строка

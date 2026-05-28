@@ -284,8 +284,10 @@ async function runAnalysis() {
     if (result.status === 'done') {
       currentStatus.value = 'done'
       applyPatternDecorations()
-      const hit = metrics.value ? (metrics.value.hit_rate * 100).toFixed(1) : '0.0'
-      toast(`Анализ завершён — доля попаданий в кэш: ${hit}%`, 'success')
+      const hit = metrics.value
+        ? (primaryCacheLevel(metrics.value).hit_rate * 100).toFixed(1)
+        : '0.0'
+      toast(`Анализ завершён — L1 hit rate: ${hit}%`, 'success')
     } else {
       currentStatus.value = 'error'
       applyPatternDecorations()
@@ -402,30 +404,32 @@ function applyPatternDecorations() {
   currentDecorations.value = editor.deltaDecorations(currentDecorations.value, decorations)
 }
 
+function primaryCacheLevel(m: AnalysisMetrics) {
+  return m.levels.find((level) => level.cache_level === 'L1') ?? m.levels[0]
+}
+
 function applyMetricsSummaryDecoration(m: AnalysisMetrics) {
   const editor = editorRef.value
   const monaco = monacoRef.value
-  if (!editor || !monaco) return
+  if (!editor || !monaco || m.levels.length === 0) return
 
-  const isBad = m.miss_rate > 0.5
-  const isWarn = m.miss_rate > 0.2 && !isBad
+  const primary = primaryCacheLevel(m)
+  const isBad = primary.miss_rate > 0.5
+  const isWarn = primary.miss_rate > 0.2 && !isBad
   const className = isBad ? 'line-decoration-bad' : isWarn ? 'line-decoration-warn' : 'line-decoration-good'
   const glyphClass = isBad ? 'glyph-bad' : isWarn ? 'glyph-warn' : 'glyph-good'
 
-  const hitPct = (m.hit_rate * 100).toFixed(1)
-  const missPct = (m.miss_rate * 100).toFixed(1)
-  const hoverText = [
-    `**Результаты анализа кэша**`,
-    '',
-    `| Метрика | Значение |`,
-    `|:---|:---|`,
-    `| Доля попаданий | ${hitPct}% |`,
-    `| Доля промахов | ${missPct}% |`,
-    `| Попаданий | ${m.cache_hits.toLocaleString()} |`,
-    `| Промахов | ${m.cache_misses.toLocaleString()} |`,
-    `| Обращений к памяти | ${m.total_memory_accesses.toLocaleString()} |`,
-    `| Оценка оптимизации | ${m.optimization_score.toFixed(1)} |`,
-  ].join('\n')
+  const levelRows = m.levels
+    .flatMap((level) => [
+      `| ${level.cache_level} hit | ${(level.hit_rate * 100).toFixed(1)}% |`,
+      `| ${level.cache_level} miss | ${(level.miss_rate * 100).toFixed(1)}% |`,
+      `| ${level.cache_level} score | ${level.optimization_score.toFixed(1)} |`,
+    ])
+    .join('\n')
+
+  const hoverText = [`**Результаты анализа кэша**`, '', `| Метрика | Значение |`, `|:---|:---|`, levelRows].join(
+    '\n',
+  )
 
   currentDecorations.value = editor.deltaDecorations(currentDecorations.value, [
     {

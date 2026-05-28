@@ -2,6 +2,7 @@ export { useAnalysisStore } from './model/analysis.store'
 export type {
   AnalysisTask,
   AnalysisMetrics,
+  CacheLevelMetrics,
   AggregatedPattern,
   FileSimulationResults,
   TaskStatus,

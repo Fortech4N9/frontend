@@ -9,9 +9,6 @@ import {
   Filter,
   HardDrive,
   Recycle,
-  TrendingDown,
-  TrendingUp,
-  Zap,
 } from 'lucide-vue-next'
 import {
   STATUS_LABELS,
@@ -100,10 +97,7 @@ const sortedPatterns = computed(() => {
 })
 
 const hasMetrics = computed(
-  () =>
-    props.metrics !== null &&
-    props.metrics !== undefined &&
-    props.metrics.total_memory_accesses > 0,
+  () => props.metrics !== null && props.metrics !== undefined && props.metrics.levels.length > 0,
 )
 
 const aggregateMisses = computed(() => {
@@ -252,81 +246,99 @@ function downloadJson() {
       </div>
     </div>
 
-    <!-- Карточки агрегата по L1 -->
-    <div v-if="hasMetrics && metrics" class="grid grid-cols-3 gap-2.5">
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/50 p-3">
-        <div class="flex items-center gap-1.5 mb-1">
-          <div class="rounded-md p-1 bg-green-500/10">
-            <TrendingUp :size="12" class="text-green-600 dark:text-green-400" />
-          </div>
-          <span class="text-[10px] text-zinc-500 uppercase tracking-wide">Доля попаданий</span>
-        </div>
-        <p :class="['text-lg font-bold', rateColor(metrics.hit_rate)]">
-          {{ (metrics.hit_rate * 100).toFixed(1) }}%
-        </p>
-      </div>
+    <!-- Метрики по уровням кэша -->
+    <div
+      v-if="hasMetrics && metrics"
+      class="rounded-xl border border-zinc-200 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/50 p-3.5 space-y-3 overflow-x-auto"
+    >
+      <h4 class="text-xs font-semibold text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
+        Кэш-симуляция по уровням
+      </h4>
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="text-left text-[10px] uppercase tracking-wide text-zinc-500 border-b border-zinc-200 dark:border-zinc-700">
+            <th class="pb-2 pr-3 font-semibold">Уровень</th>
+            <th class="pb-2 pr-3 font-semibold text-right">Обращений</th>
+            <th class="pb-2 pr-3 font-semibold text-right">Попаданий</th>
+            <th class="pb-2 pr-3 font-semibold text-right">Промахов</th>
+            <th class="pb-2 pr-3 font-semibold text-right">Hit %</th>
+            <th class="pb-2 pr-3 font-semibold text-right">Miss %</th>
+            <th class="pb-2 font-semibold text-right">Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="level in metrics.levels"
+            :key="level.cache_level"
+            class="border-b border-zinc-100 dark:border-zinc-800/80 last:border-0"
+          >
+            <td class="py-2 pr-3 font-semibold text-zinc-800 dark:text-zinc-100">
+              {{ level.cache_level }}
+            </td>
+            <td class="py-2 pr-3 text-right tabular-nums text-zinc-700 dark:text-zinc-200">
+              {{ level.total_memory_accesses.toLocaleString() }}
+            </td>
+            <td class="py-2 pr-3 text-right tabular-nums text-green-600 dark:text-green-400">
+              {{ level.cache_hits.toLocaleString() }}
+            </td>
+            <td class="py-2 pr-3 text-right tabular-nums text-red-600 dark:text-red-400">
+              {{ level.cache_misses.toLocaleString() }}
+            </td>
+            <td :class="['py-2 pr-3 text-right tabular-nums font-medium', rateColor(level.hit_rate)]">
+              {{ (level.hit_rate * 100).toFixed(1) }}%
+            </td>
+            <td :class="['py-2 pr-3 text-right tabular-nums font-medium', rateColor(level.miss_rate, true)]">
+              {{ (level.miss_rate * 100).toFixed(1) }}%
+            </td>
+            <td class="py-2 text-right tabular-nums font-semibold text-zinc-900 dark:text-white">
+              {{ level.optimization_score.toFixed(1) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/50 p-3">
-        <div class="flex items-center gap-1.5 mb-1">
-          <div class="rounded-md p-1 bg-red-500/10">
-            <TrendingDown :size="12" class="text-red-600 dark:text-red-400" />
+      <div
+        v-for="level in metrics.levels"
+        :key="`${level.cache_level}-bars`"
+        class="space-y-1.5"
+      >
+        <div class="text-[11px] font-medium text-zinc-600 dark:text-zinc-300">{{ level.cache_level }}</div>
+        <div class="space-y-0.5">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-zinc-500">Попадания</span>
+            <span :class="rateColor(level.hit_rate)">{{ (level.hit_rate * 100).toFixed(1) }}%</span>
           </div>
-          <span class="text-[10px] text-zinc-500 uppercase tracking-wide">Доля промахов</span>
-        </div>
-        <p :class="['text-lg font-bold', rateColor(metrics.miss_rate, true)]">
-          {{ (metrics.miss_rate * 100).toFixed(1) }}%
-        </p>
-      </div>
-
-      <div class="rounded-xl border border-zinc-200 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/50 p-3">
-        <div class="flex items-center gap-1.5 mb-1">
-          <div class="rounded-md p-1 bg-purple-500/10">
-            <Zap :size="12" class="text-purple-600 dark:text-purple-400" />
+          <div class="h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+            <div
+              :class="['h-full rounded-full transition-all duration-1000', rateBg(level.hit_rate)]"
+              :style="{ width: `${level.hit_rate * 100}%` }"
+            />
           </div>
-          <span class="text-[10px] text-zinc-500 uppercase tracking-wide">Оценка</span>
         </div>
-        <p class="text-lg font-bold text-zinc-900 dark:text-white">
-          {{ metrics.optimization_score.toFixed(1) }}
-        </p>
+        <div class="space-y-0.5">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="text-zinc-500">Промахи</span>
+            <span :class="rateColor(level.miss_rate, true)">{{ (level.miss_rate * 100).toFixed(1) }}%</span>
+          </div>
+          <div class="h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
+            <div
+              :class="['h-full rounded-full transition-all duration-1000', rateBg(level.miss_rate, true)]"
+              :style="{ width: `${level.miss_rate * 100}%` }"
+            />
+          </div>
+        </div>
       </div>
     </div>
 
-    <!-- Расширенный блок счётчиков -->
+    <!-- Дополнительная статистика по паттернам -->
     <div
       v-if="hasMetrics && metrics"
       class="rounded-xl border border-zinc-200 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/50 p-3.5 space-y-2"
     >
       <h4 class="text-xs font-semibold text-zinc-600 dark:text-zinc-300 uppercase tracking-wide">
-        Кэш-симуляция (L1)
+        Сводка по паттернам
       </h4>
       <div class="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-        <div class="flex justify-between">
-          <span class="flex items-center gap-1.5 text-zinc-500">
-            <Activity :size="12" class="text-indigo-500" />
-            Всего обращений
-          </span>
-          <span class="text-zinc-900 dark:text-white font-medium tabular-nums">
-            {{ metrics.total_memory_accesses.toLocaleString() }}
-          </span>
-        </div>
-        <div class="flex justify-between">
-          <span class="flex items-center gap-1.5 text-zinc-500">
-            <TrendingUp :size="12" class="text-green-500" />
-            Попаданий
-          </span>
-          <span class="text-green-600 dark:text-green-400 font-medium tabular-nums">
-            {{ metrics.cache_hits.toLocaleString() }}
-          </span>
-        </div>
-        <div class="flex justify-between">
-          <span class="flex items-center gap-1.5 text-zinc-500">
-            <TrendingDown :size="12" class="text-red-500" />
-            Промахов
-          </span>
-          <span class="text-red-600 dark:text-red-400 font-medium tabular-nums">
-            {{ metrics.cache_misses.toLocaleString() }}
-          </span>
-        </div>
         <div class="flex justify-between">
           <span class="flex items-center gap-1.5 text-zinc-500">
             <HardDrive :size="12" class="text-zinc-400" />
@@ -354,36 +366,14 @@ function downloadJson() {
             {{ patterns.length }}
           </span>
         </div>
-      </div>
-
-      <div class="space-y-1.5 pt-1">
-        <div class="space-y-0.5">
-          <div class="flex items-center justify-between text-[11px]">
-            <span class="text-zinc-500">Попадания</span>
-            <span :class="rateColor(metrics.hit_rate)">
-              {{ (metrics.hit_rate * 100).toFixed(1) }}%
-            </span>
-          </div>
-          <div class="h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
-            <div
-              :class="['h-full rounded-full transition-all duration-1000', rateBg(metrics.hit_rate)]"
-              :style="{ width: `${metrics.hit_rate * 100}%` }"
-            />
-          </div>
-        </div>
-        <div class="space-y-0.5">
-          <div class="flex items-center justify-between text-[11px]">
-            <span class="text-zinc-500">Промахи</span>
-            <span :class="rateColor(metrics.miss_rate, true)">
-              {{ (metrics.miss_rate * 100).toFixed(1) }}%
-            </span>
-          </div>
-          <div class="h-2 rounded-full bg-zinc-200 dark:bg-zinc-700 overflow-hidden">
-            <div
-              :class="['h-full rounded-full transition-all duration-1000', rateBg(metrics.miss_rate, true)]"
-              :style="{ width: `${metrics.miss_rate * 100}%` }"
-            />
-          </div>
+        <div class="flex justify-between">
+          <span class="flex items-center gap-1.5 text-zinc-500">
+            <Activity :size="12" class="text-indigo-500" />
+            L1 промахов (паттерны)
+          </span>
+          <span class="text-red-600 dark:text-red-400 font-medium tabular-nums">
+            {{ aggregateMisses.totalMisses.toLocaleString() }}
+          </span>
         </div>
       </div>
     </div>
@@ -456,10 +446,17 @@ function downloadJson() {
       v-if="patterns.length > 0"
       class="rounded-xl border border-zinc-200 dark:border-zinc-700/50 bg-white dark:bg-zinc-800/50 overflow-hidden"
     >
-      <div class="flex items-center justify-between px-3 py-2 border-b border-zinc-200 dark:border-zinc-700/60">
-        <h4 class="text-xs font-semibold text-zinc-600 dark:text-zinc-300 uppercase tracking-wide flex items-center gap-1.5">
-          <ArrowDownAZ :size="12" /> Паттерны доступа ({{ sortedPatterns.length }})
-        </h4>
+      <div class="px-3 py-2 border-b border-zinc-200 dark:border-zinc-700/60 space-y-1">
+        <div class="flex items-center justify-between">
+          <h4 class="text-xs font-semibold text-zinc-600 dark:text-zinc-300 uppercase tracking-wide flex items-center gap-1.5">
+            <ArrowDownAZ :size="12" /> Паттерны доступа ({{ sortedPatterns.length }})
+          </h4>
+        </div>
+        <p class="text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Промахи в таблице — суммарно по массиву (<code class="font-mono">base_symbol</code>) за всю симуляцию,
+          не по одной строке кода. Строки с одним массивом показывают одно и то же значение — не суммируйте.
+          Итоговые hit/miss по уровням кэша — в блоке «Кэш-симуляция по уровням» выше.
+        </p>
       </div>
       <div class="overflow-x-auto max-h-[420px]">
         <table class="w-full text-[11px]">
@@ -474,7 +471,12 @@ function downloadJson() {
               <th class="px-2 py-2 font-medium">Глуб.</th>
               <th class="px-2 py-2 font-medium">Заполн.</th>
               <th class="px-2 py-2 font-medium">Кэш</th>
-              <th class="px-2 py-2 font-medium text-right">Промахи</th>
+              <th
+                class="px-2 py-2 font-medium text-right"
+                title="Суммарные промахи массива base_symbol за симуляцию; не суммировать по строкам"
+              >
+                Промахи Σ массива
+              </th>
               <th class="px-2 py-2 font-medium text-right">Чт./зап.</th>
               <th class="px-2 py-2 font-medium">РБ</th>
               <th class="px-2 py-2 font-medium">Завис.</th>
@@ -532,6 +534,11 @@ function downloadJson() {
               </td>
               <td
                 class="px-2 py-1.5 text-right font-semibold tabular-nums"
+                :title="
+                  p.source_task_id && p.source_task_id !== taskId
+                    ? `Симуляция из задачи ${p.source_task_id.slice(0, 8)}…; промахи всего массива ${p.base_symbol}`
+                    : `Промахи всего массива ${p.base_symbol} за симуляцию`
+                "
                 :class="
                   p.misses_total > 1000
                     ? 'text-red-600 dark:text-red-400'
